@@ -174,6 +174,15 @@ def inject_drift():
 
     return redirect(url_for("home"))
 
+@app.route("/reset", methods=["GET", "POST"])
+def reset():
+    global engine_a_state, engine_b_state
+
+    engine_a_state = {"counter": 0, "version": 1}
+    engine_b_state = {"counter": 0, "version": 1}
+
+    return redirect(url_for("home"))
+
     
              
     
