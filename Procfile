@@ -1,0 +1,1 @@
+web: gunicorn skorn_web_clean:app
