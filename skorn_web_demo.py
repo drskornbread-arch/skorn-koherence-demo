@@ -108,7 +108,9 @@ HTML = """
         <button class="drift" onclick="location.href='/inject'">Inject Drift</button>
         <button class="reset" onclick="location.href='/reset'">Reset System</button>
     </div>
-
+    <p style="margin-top:10px; font-size:14px; color:#555;">
+    Drift mutates state. Divergence is enforced on the next deterministic cycle.
+</p>
     <div class="log">
         <h3>Replay Log</h3>
         <ul>
