@@ -29,30 +29,27 @@ class KoherenceState:
         canonical = json.dumps(state, sort_keys=True, separators=(',',':'))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
-    def advance(self):
-        if self.divergence_detected:
-            return
+   def advance(self):
+    if self.divergence_detected:
+        return
 
-        self.cycle += 1
+    self.cycle += 1
 
-        # Engine A
-        self.engines["A"]["counter"] += 1
-        self.engines["A"]["version"] += 1
-        self.log.append(f"Cycle {self.cycle}: A incremented")
-        self.hashes["A"] = self._hash(self.engines["A"])
+    # Apply SAME deterministic update to both engines
+    for k in ["A", "B"]:
+        self.engines[k]["counter"] += 1
+        self.engines[k]["version"] += 1
+        self.hashes[k] = self._hash(self.engines[k])
 
-        # Engine B
-        self.engines["B"]["counter"] += 1
-        self.engines["B"]["version"] += 1
-        self.log.append(f"Cycle {self.cycle}: B incremented")
-        self.hashes["B"] = self._hash(self.engines["B"])
+    self.log.append(f"Cycle {self.cycle}: A incremented")
+    self.log.append(f"Cycle {self.cycle}: B incremented")
 
-        # Check divergence
-        if self.hashes["A"] != self.expected_hashes["A"] or self.hashes["B"] != self.expected_hashes["B"]:
-            self.divergence_detected = True
-            self.log.append("Divergence detected — halted")
+    # Engines must match each other
+    if self.hashes["A"] != self.hashes["B"]:
+        self.divergence_detected = True
+        self.log.append("Divergence detected — halted")
 
-        self.expected_hashes = self.hashes.copy()
+    self.expected_hashes = self.hashes.copy()
 
     def inject_drift(self):
         if not self.drift_injected:
