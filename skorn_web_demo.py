@@ -1,11 +1,10 @@
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for
+from flask import Flask, render_template_string, jsonify, redirect, url_for
 import json
 import hashlib
-import time
 
 app = Flask(__name__)
 
-# Single global state container
+
 class KoherenceState:
     def __init__(self):
         self.reset()
@@ -26,39 +25,41 @@ class KoherenceState:
         self.divergence_detected = False
 
     def _hash(self, state):
-        canonical = json.dumps(state, sort_keys=True, separators=(',',':'))
+        canonical = json.dumps(state, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
-   def advance(self):
-    if self.divergence_detected:
-        return
+    def advance(self):
+        if self.divergence_detected:
+            return
 
-    self.cycle += 1
+        self.cycle += 1
 
-    # Apply SAME deterministic update to both engines
-    for k in ["A", "B"]:
-        self.engines[k]["counter"] += 1
-        self.engines[k]["version"] += 1
-        self.hashes[k] = self._hash(self.engines[k])
+        # Apply SAME deterministic update to both engines
+        for k in ["A", "B"]:
+            self.engines[k]["counter"] += 1
+            self.engines[k]["version"] += 1
+            self.hashes[k] = self._hash(self.engines[k])
 
-    self.log.append(f"Cycle {self.cycle}: A incremented")
-    self.log.append(f"Cycle {self.cycle}: B incremented")
+        self.log.append(f"Cycle {self.cycle}: A incremented")
+        self.log.append(f"Cycle {self.cycle}: B incremented")
 
-    # Engines must match each other
-    if self.hashes["A"] != self.hashes["B"]:
-        self.divergence_detected = True
-        self.log.append("Divergence detected — halted")
+        # Engines must match each other
+        if self.hashes["A"] != self.hashes["B"]:
+            self.divergence_detected = True
+            self.log.append("Divergence detected — halted")
 
-    self.expected_hashes = self.hashes.copy()
+        self.expected_hashes = self.hashes.copy()
 
     def inject_drift(self):
         if not self.drift_injected:
-            self.engines["A"]["counter"] += 5  # artificial drift
+            self.engines["A"]["counter"] += 5
             self.hashes["A"] = self._hash(self.engines["A"])
             self.log.append("DRIFT injected into Engine A")
             self.drift_injected = True
 
+
 state = KoherenceState()
+
 
 HTML = """
 <!DOCTYPE html>
@@ -83,7 +84,10 @@ HTML = """
     <p>Deterministic state validation across parallel execution engines.</p>
 
     {% if divergence_detected %}
-    <div class="divergence">✖ DIVERGENCE DETECTED — Advancement Halted<br>Manual drift injected.</div>
+    <div class="divergence">
+        ✖ DIVERGENCE DETECTED — Advancement Halted<br>
+        Manual drift injected.
+    </div>
     {% endif %}
 
     <div class="engines">
@@ -118,39 +122,46 @@ HTML = """
 </html>
 """
 
+
 @app.route('/')
 def home():
-    return render_template_string(HTML,
+    return render_template_string(
+        HTML,
         engines=state.engines,
         hashes=state.hashes,
         log=state.log,
-        divergence_detected=state.divergence_detected)
+        divergence_detected=state.divergence_detected
+    )
+
 
 @app.route('/next')
 def next_cycle():
     state.advance()
     return redirect(url_for('home'))
 
+
 @app.route('/inject')
 def inject():
     state.inject_drift()
     return redirect(url_for('home'))
+
 
 @app.route('/reset')
 def reset():
     state.reset()
     return redirect(url_for('home'))
 
+
 @app.route('/state')
 def debug_state():
     return jsonify({
         "engines": state.engines,
         "hashes": state.hashes,
-        "expected": state.expected_hashes,
         "cycle": state.cycle,
         "log": state.log,
         "divergence": state.divergence_detected
     })
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
