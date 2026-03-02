@@ -1,201 +1,159 @@
-from flask import Flask, render_template_string, redirect, url_for, request
-import hashlib
+from flask import Flask, render_template_string, jsonify, request, redirect, url_for
 import json
-import copy
+import hashlib
+import time
 
 app = Flask(__name__)
 
-# -----------------------------
-# Deterministic Utilities
-# -----------------------------
+# Single global state container
+class KoherenceState:
+    def __init__(self):
+        self.reset()
 
-def canonical_json(obj):
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    def reset(self):
+        self.engines = {
+            "A": {"counter": 0, "version": 0},
+            "B": {"counter": 0, "version": 0}
+        }
+        self.hashes = {
+            "A": self._hash(self.engines["A"]),
+            "B": self._hash(self.engines["B"])
+        }
+        self.expected_hashes = self.hashes.copy()
+        self.log = []
+        self.cycle = 0
+        self.drift_injected = False
+        self.divergence_detected = False
 
-def state_hash(state):
-    return hashlib.sha256(canonical_json(state).encode()).hexdigest()
+    def _hash(self, state):
+        canonical = json.dumps(state, sort_keys=True, separators=(',',':'))
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
-def apply_delta(state, delta):
-    new_state = copy.deepcopy(state)
-    new_state["counter"] += delta.get("inc", 0)
-    new_state["version"] += 1
-    return new_state
+    def advance(self):
+        if self.divergence_detected:
+            return
 
-# -----------------------------
-# Global Demo State
-# -----------------------------
+        self.cycle += 1
 
-engineA = {"counter": 0, "version": 0}
-engineB = {"counter": 0, "version": 0}
-status = "VERIFIED"
-message = "Systems synchronized."
-cycle = 0
-event_log = []
-# -----------------------------
-# HTML Template
-# -----------------------------
+        # Engine A
+        self.engines["A"]["counter"] += 1
+        self.engines["A"]["version"] += 1
+        self.log.append(f"Cycle {self.cycle}: A incremented")
+        self.hashes["A"] = self._hash(self.engines["A"])
+
+        # Engine B
+        self.engines["B"]["counter"] += 1
+        self.engines["B"]["version"] += 1
+        self.log.append(f"Cycle {self.cycle}: B incremented")
+        self.hashes["B"] = self._hash(self.engines["B"])
+
+        # Check divergence
+        if self.hashes["A"] != self.expected_hashes["A"] or self.hashes["B"] != self.expected_hashes["B"]:
+            self.divergence_detected = True
+            self.log.append("Divergence detected — halted")
+
+        self.expected_hashes = self.hashes.copy()
+
+    def inject_drift(self):
+        if not self.drift_injected:
+            self.engines["A"]["counter"] += 5  # artificial drift
+            self.hashes["A"] = self._hash(self.engines["A"])
+            self.log.append("DRIFT injected into Engine A")
+            self.drift_injected = True
+
+state = KoherenceState()
 
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<title><title>SKORN Koherence — Deterministic Engine</title></title>
-<style>
-body { font-family: Arial; background:#111; color:#eee; text-align:center; }
-.container { display:flex; justify-content:space-around; margin-top:40px; }
-.panel { background:#222; padding:20px; width:40%; border-radius:10px; }
-.status { margin-top:40px; font-size:24px; }
-.green { color:#00ff88; }
-.red { color:#ff4444; }
-button { padding:10px 20px; margin:20px; font-size:16px; border:none; border-radius:6px; }
-.run { background:#007bff; color:white; }
-.drift { background:#ff4444; color:white; }
-.reset {
-    background:#222;
-    color:#fff;
-    border:1px solid #888;
-}
-
-.status-live {
-    animation: glowGreen 1.5s ease-in-out infinite alternate;
-}
-@keyframes glowGreen {
-    from { text-shadow: 0 0 5px #00ff88; }
-    to   { text-shadow: 0 0 15px #00ff88; }
-}
-
-.status-halt {
-    animation: pulseRed 1s infinite;
-}
-@keyframes pulseRed {
-    0%   { opacity: 1; }
-    50%  { opacity: 0.6; }
-    100% { opacity: 1; }
-}
-</style>
+    <title>SKORN Koherence — Deterministic Engine</title>
+    <style>
+        body { font-family: Arial; margin: 20px; background: #f8f9fa; }
+        h1 { color: #333; }
+        .engines { display: flex; gap: 30px; }
+        .engine { padding: 20px; border: 1px solid #ccc; border-radius: 8px; background: white; width: 45%; }
+        .log { margin-top: 30px; padding: 15px; background: #e9ecef; border-radius: 8px; max-height: 300px; overflow-y: auto; }
+        button { padding: 12px 20px; font-size: 16px; margin: 10px 10px 0 0; cursor: pointer; }
+        .run { background: #28a745; color: white; border: none; }
+        .drift { background: #ffc107; color: black; border: none; }
+        .reset { background: #dc3545; color: white; border: none; }
+        .divergence { color: #dc3545; font-weight: bold; font-size: 1.3em; margin: 20px 0; }
+    </style>
 </head>
 <body>
+    <h1>SKORN Koherence — Deterministic Engine</h1>
+    <p>Deterministic state validation across parallel execution engines.</p>
 
-<h1>SKORN Koherence — Deterministic Engine</h1>
-<p style="opacity:0.7; margin-top:-10px;">
-Deterministic state validation across parallel execution engines.
-</p>
+    {% if divergence_detected %}
+    <div class="divergence">✖ DIVERGENCE DETECTED — Advancement Halted<br>Manual drift injected.</div>
+    {% endif %}
 
-<div class="container">
-  <div class="panel">
-    <h2>Engine A</h2>
-    <p>State: {{engineA}}</p>
-    <p>Hash: {{hashA}}</p>
-  </div>
-  <div class="panel">
-    <h2>Engine B</h2>
-    <p>State: {{engineB}}</p>
-    <p>Hash: {{hashB}}</p>
-  </div>
-</div>
+    <div class="engines">
+        <div class="engine">
+            <h3>Engine A</h3>
+            <pre>State: {{ engines.A }}</pre>
+            <pre>Hash: {{ hashes.A }}</pre>
+        </div>
+        <div class="engine">
+            <h3>Engine B</h3>
+            <pre>State: {{ engines.B }}</pre>
+            <pre>Hash: {{ hashes.B }}</pre>
+        </div>
+    </div>
 
-</div>
+    <div>
+        <button class="run" onclick="location.href='/next'">Run Next Cycle</button>
+        <button class="drift" onclick="location.href='/inject'">Inject Drift</button>
+        <button class="reset" onclick="location.href='/reset'">Reset System</button>
+    </div>
 
-<div class="status">
-  {% if status == "VERIFIED" %}
-    <div class="green status-live">✓ VERIFIED — Advancement Allowed</div>
-  {% else %}
-    <div class="red status-halt">✖ DIVERGENCE DETECTED — Advancement Halted</div>
-  {% endif %}
-  <p>{{message}}</p>
-</div>
+    <div class="log">
+        <h3>Replay Log</h3>
+        <ul>
+            {% for entry in log %}
+            <li>{{ entry }}</li>
+            {% endfor %}
+        </ul>
+    </div>
 
-<div>
-  <a href="/next"><button class="run">Run Next Cycle</button></a>
-  <a href="/drift"><button class="drift">Inject Drift</button></a>
-  <a href="/reset"><button class="reset">Reset System</button></a>
-</div>
-<div class="log">
-  <h3>Replay Log</h3>
-  <ul>
-    {% for e in event_log %}
-      <li>{{ e }}</li>
-    {% endfor %}
-  </ul>
-</div>
 </body>
 </html>
 """
 
-# -----------------------------
-# Routes
-# -----------------------------
-
-@app.route("/")
+@app.route('/')
 def home():
-    return render_template_string(
-        HTML,
-        engineA=engineA,
-        engineB=engineB,
-        hashA=state_hash(engineA),
-        hashB=state_hash(engineB),
-        status=status,
-        message=message,
-        event_log=event_log
-    )
+    return render_template_string(HTML,
+        engines=state.engines,
+        hashes=state.hashes,
+        log=state.log,
+        divergence_detected=state.divergence_detected)
 
-@app.route("/next")
+@app.route('/next')
 def next_cycle():
-    global engineA, engineB, status, message, cycle, event_log
+    state.advance()
+    return redirect(url_for('home'))
 
-    if status != "VERIFIED":
-        return redirect(url_for("home"))
+@app.route('/inject')
+def inject():
+    state.inject_drift()
+    return redirect(url_for('home'))
 
-    delta = {"inc": 1}
-    engineA = apply_delta(engineA, delta)
-    engineB = apply_delta(engineB, delta)
-    cycle += 1
-    event_log.append(f"Cycle {cycle}: increment applied")
-    if state_hash(engineA) == state_hash(engineB):
-        status = "VERIFIED"
-        message = f"Cycle {cycle} validated."
-        event_log.append(f"Cycle {cycle}: VERIFIED")
-    else:
-        status = "HALTED"
-        message = "Unauthorized state mutation detected."
-        event_log.append(f"Cycle {cycle}: HALTED (divergence)")
-    return redirect(url_for("home"))
-@app.route("/drift")
-def inject_drift():
-    global engineA, engineB, status, message, event_log
-
-    # mutate ONLY one engine to force divergence
-    engineA["counter"] += 5
-    engineA["version"] += 1
-
-    status = "HALTED"
-    message = "Manual drift injected."
-    event_log.append("DRIFT injected into Engine A")
-
-    return redirect(url_for("home"))
-
-@app.route("/reset", methods=["GET", "POST"])
+@app.route('/reset')
 def reset():
-    global engine_a_state, engine_b_state
+    state.reset()
+    return redirect(url_for('home'))
 
-    engine_a_state = {"counter": 0, "version": 1}
-    engine_b_state = {"counter": 0, "version": 1}
+@app.route('/state')
+def debug_state():
+    return jsonify({
+        "engines": state.engines,
+        "hashes": state.hashes,
+        "expected": state.expected_hashes,
+        "cycle": state.cycle,
+        "log": state.log,
+        "divergence": state.divergence_detected
+    })
 
-    return redirect(url_for("home"))
-
-    
-             
-    
-
-    
-
-
-
-            
-
-    
-
-    
-
-if __name__ == "__main__":
-    app.run(debug=False)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
